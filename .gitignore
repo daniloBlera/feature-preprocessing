@@ -1,0 +1,10 @@
+# Downloaded resources
+bionlp-dataset/
+brat-server-setup/
+stanza_resources/
+
+# Virtualenv
+.venv
+
+# "Compilation" files
+__pycache__/
