@@ -1,7 +1,8 @@
 # Downloaded resources
-bionlp-dataset/
-brat-server-setup/
 stanza_resources/
+BioNLP-OST-2019_BB-rel_dev/
+BioNLP-OST-2019_BB-rel_train/
+BioNLP-OST-2019_BB-rel_test/
 
 # Virtualenv
 .venv
