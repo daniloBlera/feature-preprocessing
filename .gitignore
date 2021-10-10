@@ -9,3 +9,6 @@ BioNLP-OST-2019_BB-rel_test/
 
 # "Compilation" files
 __pycache__/
+
+# Generated pyvis visualization files
+graphs/
