@@ -168,7 +168,7 @@ def get_relation_node_attrs(relation: RelationParams) -> RelationNodeAttrs:
         relation: RelationParams
             A relation's parameter dictionary.
 
-    Return: TYPE
+    Return: RelationNodeAttrs
         A dictionary containing the relation's features to be used by networkx's
         feature graph.
     """
@@ -379,8 +379,6 @@ def insert_sentence_features(
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
-
-    Return: nothing
     """
     node_key = f'{sentence.doc.fname}:{sentence.idx}'
     node_attrs = get_sentence_node_attrs(sentence)
@@ -411,8 +409,6 @@ def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
-
-    Return: nothing
     """
     node_key = f'{word.sent.doc.fname}:{word.end_char}'
     node_attrs = get_word_node_attrs(word)
@@ -435,8 +431,6 @@ def insert_deprel_features(
 
         head: Word
             The syntactic head of the `word` argument.
-
-    Return: nothing
     """
     word_key = f'{word.sent.doc.fname}:{word.end_char}'
     head_key = f'{head.sent.doc.fname}:{head.end_char}'
@@ -462,8 +456,6 @@ def insert_annotated_document_features(
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
-
-    Return: nothing
     """
     for doc in documents:
         insert_document_features(doc, feature_graph)
@@ -529,11 +521,11 @@ def insert_relation_features(
     and `T15`.
 
     Arguments:
-        ARG: TYPE
-            DESCRIPTION
+        relation: RelationParams
+            A dict containing the relation's parameters.
 
-    Return: TYPE
-        DESCRIPTION
+        feature_graph: nx.DiGraph
+            A graph of features to populate.
     """
     node_key = f'{relation["fname"]}:{relation["id"]}'
     node_attrs = get_relation_node_attrs(relation)
@@ -579,8 +571,6 @@ def insert_entity_relation_features(
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
-
-    Return: Nothing
     """
     for sample in samples:
         for entity_dict in get_sample_entity_param_dicts(sample):
