@@ -103,9 +103,13 @@ def annotate(samples: utils.Samples,
              verbosity_level: int = 1) -> utils.Documents:
     """Annotate the samples with the given pipeline.
 
-    Return the pipeline annotations for the samples' raw texts. Note that the
-    'Token' level objects are modified to have the 'sent_idx' attribute that
-    indicates the index of the sentence that token belongs to.
+    Annotate the list of text documents and, for internal purposes, add a few
+    extra attributes to the document, sentence and word objects:
+
+    *   The text document's filename into `document.fname`;
+    *   The sentence's index relative to the document as `sentence.idx`;
+    *   A reference to the sentence from the word and token, as `word.sent`
+        and `token.sent`.
 
     Arguments:
         samples: utils.Samples
