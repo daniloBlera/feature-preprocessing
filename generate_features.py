@@ -9,21 +9,17 @@ import preprocess.parsing
 
 
 DATA_ROOT_DIR = './bionlp-dataset/BioNLP-OST-2019_BB-rel_dev'
-DEFAULT_MODEL_DIR = './stanza_resources'
+MODEL_DIR = './stanza_resources'
 
 
 def main(rootdir: str) -> NoReturn:
     samples = preprocess.parsing.load_dataset_files(rootdir, verbosity_level=0)
-
     samples = samples[:2]   # Reducing the samples for faster tests
-    nlp = stanza.Pipeline(
-        'en', dir=DEFAULT_MODEL_DIR, preprocessors='tokenize')
 
-    documents = preprocess.parsing.annotate(
-        samples=samples, pipeline=nlp)
-
-    graph = preprocess.parsing.create_feature_graph(
-        documents, samples)
+    stanza.download(lang='en', model_dir=MODEL_DIR)
+    nlp = stanza.Pipeline('en', dir=MODEL_DIR, preprocessors='tokenize')
+    documents = preprocess.parsing.annotate(samples=samples, pipeline=nlp)
+    graph = preprocess.parsing.create_feature_graph(documents, samples)
 
     for sample in samples:
         preprocess.parsing.export_subgraph(sample.fname, graph)
@@ -41,6 +37,7 @@ if __name__ == '__main__':
     parser.add_argument(
         'ROOTDIR',
         type=str,
+        default=MODEL_DIR,
         help=('The path to the directory containing the text and annotation '
               'files from BB-Rel.')
     )
