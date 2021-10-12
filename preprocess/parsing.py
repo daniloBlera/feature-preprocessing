@@ -158,7 +158,7 @@ def annotate(samples: utils.Samples,
 
 
 def create_feature_graph(
-    documents: utils.Documents, samples: utils.Samples) -> DiGraph:
+        documents: utils.Documents, samples: utils.Samples) -> DiGraph:
     """Build a graph with morphological and relational features.
 
     Create and populate a directed graph with the morphological and relational
@@ -245,6 +245,21 @@ def create_feature_graph(
 
 
 def export_subgraph(node_label, graph: DiGraph, filepath=None) -> NoReturn:
+    """Export the document's subgraph for visualization.
+
+    Given a node label, export to file a subgraph of all connected nodes.
+    Normally you would use this function to export a document's subgraph
+    containing its sentences, tokens, entities and relations.
+
+    Arguments:
+        node_label: str
+            The label of a node in the feature graph - most likely a document's
+            filename.
+
+        graph: DiGraph
+            A graph of features built from a list of (stanza) annotated
+            documents.
+    """
     ug = graph.to_undirected()
     connected_nodes = node_connected_component(ug, node_label)
     sg = graph.subgraph(connected_nodes)
@@ -252,9 +267,11 @@ def export_subgraph(node_label, graph: DiGraph, filepath=None) -> NoReturn:
     net.from_nx(sg)
 
     if filepath is None:
-        filepath = f'graphs/{node_label}.html'
+        filepath = os.path.join('graphs', node_label + '.html')
 
     if not os.path.exists((dirname := os.path.dirname(filepath))):
         os.makedirs(dirname)
 
+    print(f"Saving the graph visualization of the document '{node_label}' at",
+          f"'{filepath}'.")
     net.save_graph(filepath)

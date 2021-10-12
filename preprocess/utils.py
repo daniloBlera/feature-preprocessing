@@ -62,6 +62,12 @@ class GraphNodeType(Enum):
     ENTITY = 'ENTITY'
 
 
+class GraphColor(Enum):
+    DOCUMENT = '#DC122A'
+    SENTENCE = '#6666FF'
+    TOKEN = '#66FF66'
+
+
 def get_document_node_attrs(document: Document) -> DocumentNodeAttrs:
     """Create the graph's node attribute for a `Document`.
 
@@ -79,7 +85,8 @@ def get_document_node_attrs(document: Document) -> DocumentNodeAttrs:
     return {
         'fname': document.fname,
         'text': document.text,
-        'label': f"DOC: {document.fname}"   # for PyVis
+        'label': f"DOC: {document.fname}",  # for pyvis
+        'color': GraphColor.DOCUMENT.value # for pyvis
     }
 
 
@@ -101,7 +108,8 @@ def get_sentence_node_attrs(sentence: Sentence) -> SentenceNodeAttrs:
         'fname': sentence.doc.fname,
         'sent_idx': sentence.idx,
         'text': sentence.text,
-        'label': f'SENT-{sentence.idx}'
+        'label': f'SENT-{sentence.idx}',    # for pyvis
+        'color': GraphColor.SENTENCE.value # for pyvis
     }
 
 
@@ -130,7 +138,8 @@ def get_word_node_attrs(word: Word) -> WordNodeAttrs:
         'text': word.text,
         'upos': word.upos,
         'lemma': word.lemma,
-        'label': f"WORD: '{word.text}'"  # for PyVis
+        'label': f"WORD: '{word.text}'",    # for PyVis
+        'color': GraphColor.TOKEN.value    # for pyvis
     }
 
 
@@ -351,7 +360,7 @@ def get_sample_relation_param_dicts(sample: Sample) -> list[RelationParams]:
 
 
 def insert_document_features(
-    document: Document, feature_graph: nx.DiGraph) -> NoReturn:
+        document: Document, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert a document node into the features graph.
 
     Arguments:
@@ -366,11 +375,11 @@ def insert_document_features(
     node_key = document.fname
     node_attrs = get_document_node_attrs(document)
     feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.DOCUMENT.name)
+        node_key, **node_attrs, node_prop=GraphNodeType.DOCUMENT.value)
 
 
 def insert_sentence_features(
-    sentence: Sentence, feature_graph: nx.DiGraph) -> NoReturn:
+        sentence: Sentence, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert a sentence node into the features graph.
 
     Arguments:
@@ -384,11 +393,11 @@ def insert_sentence_features(
     node_attrs = get_sentence_node_attrs(sentence)
 
     feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.SENTENCE.name)
+        node_key, **node_attrs, node_prop=GraphNodeType.SENTENCE.value)
 
     doc_node_key = sentence.doc.fname
     feature_graph.add_edge(
-        doc_node_key, node_key, edge_prop=GraphEdgeType.DOC_TO_SENT.name)
+        doc_node_key, node_key, edge_prop=GraphEdgeType.DOC_TO_SENT.value)
 
 
 def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
@@ -414,15 +423,15 @@ def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
     node_attrs = get_word_node_attrs(word)
 
     feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.TOKEN.name)
+        node_key, **node_attrs, node_prop=GraphNodeType.TOKEN.value)
 
     sent_node_key = f'{word.sent.doc.fname}:{word.sent.idx}'
     feature_graph.add_edge(
-        sent_node_key, node_key, edge_prop=GraphEdgeType.SENT_TO_TOKEN.name)
+        sent_node_key, node_key, edge_prop=GraphEdgeType.SENT_TO_TOKEN.value)
 
 
 def insert_deprel_features(
-    word: Word, head: Word, feature_graph: nx.DiGraph) -> NoReturn:
+        word: Word, head: Word, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert dependency relation edge into the features graph.
 
     Arguments:
@@ -439,12 +448,12 @@ def insert_deprel_features(
         word_key,
         head_key,
         deprel=word.deprel,
-        edge_prop=GraphEdgeType.DEPREL.name
+        edge_prop=GraphEdgeType.DEPREL.value
     )
 
 
 def insert_annotated_document_features(
-    documents: Documents, feature_graph: nx.DiGraph) -> NoReturn:
+        documents: Documents, feature_graph: nx.DiGraph) -> NoReturn:
     """Populate the feature graph with document, sentence and word features.
 
     For each document in the list, add its features, as well as its respective
@@ -473,7 +482,7 @@ def insert_annotated_document_features(
 
 
 def insert_entity_features(
-    entity: EntityParams, feature_graph: nx.DiGraph) -> NoReturn:
+        entity: EntityParams, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert the entity node into the features graph. 
 
     Insert into the graph a node and an edge connecting the entity to the
@@ -492,23 +501,23 @@ def insert_entity_features(
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    if entity['type'] in {'Title', 'Paragraph'}:    # Ignore specific types
+    if entity['type'] in {'Title', 'Paragraph'}:    # Ignore these entities
         return
 
     node_key = f'{entity["fname"]}:{entity["id"]}'
     node_attrs = get_entity_node_attrs(entity)
     feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.ENTITY.name)
+        node_key, **node_attrs, node_prop=GraphNodeType.ENTITY.value)
 
     rightmost_boundary = entity['boundaries'][-1]
     end_char = rightmost_boundary['end']
     word_key = f'{entity["fname"]}:{end_char}'
     feature_graph.add_edge(
-        node_key, word_key, edge_prop=GraphEdgeType.ENTITY.name)
+        node_key, word_key, edge_prop=GraphEdgeType.ENTITY.value)
 
 
 def insert_relation_features(
-    relation: RelationParams, feature_graph: nx.DiGraph) -> NoReturn:
+        relation: RelationParams, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert the relation node into the features graph. 
 
     Insert into the graph a node and edges representing the relation and its two
@@ -530,19 +539,19 @@ def insert_relation_features(
     node_key = f'{relation["fname"]}:{relation["id"]}'
     node_attrs = get_relation_node_attrs(relation)
     feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.RELATION.name)
+        node_key, **node_attrs, node_prop=GraphNodeType.RELATION.value)
 
     entity1_key = f'{relation["fname"]}:{relation["e1_id"]}'
     feature_graph.add_edge(
-        node_key, entity1_key, edge_prop=GraphEdgeType.REL_TO_E1.name)
+        node_key, entity1_key, edge_prop=GraphEdgeType.REL_TO_E1.value)
 
     entity2_key = f'{relation["fname"]}:{relation["e2_id"]}'
     feature_graph.add_edge(
-        node_key, entity2_key, edge_prop=GraphEdgeType.REL_TO_E2.name)
+        node_key, entity2_key, edge_prop=GraphEdgeType.REL_TO_E2.value)
 
 
 def insert_entity_relation_features(
-    samples: Samples, feature_graph: nx.DiGraph) -> NoReturn:
+        samples: Samples, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert (inplace) the entity relation features into a graph.
 
     Populate the feature graph with entity relation features, extracted from the
