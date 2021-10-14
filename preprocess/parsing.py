@@ -157,8 +157,10 @@ def annotate(samples: utils.Samples,
     return documents
 
 
-def create_feature_graph(
-        documents: utils.Documents, samples: utils.Samples) -> DiGraph:
+def create_feature_graph(documents: utils.Documents,
+                         samples: utils.Samples,
+                         ignore_pos: list[str] = None,
+                         ignore_deprel: list[str] = None) -> DiGraph:
     """Build a graph with morphological and relational features.
 
     Create and populate a directed graph with the morphological and relational
@@ -238,7 +240,10 @@ def create_feature_graph(
         A graph of features built from a list of (stanza) annotated documents.
     """
     feature_graph = DiGraph()
-    utils.insert_annotated_document_features(documents, feature_graph)
+    utils.insert_annotated_document_features(documents=documents,
+                                             feature_graph=feature_graph,
+                                             ignore_pos=ignore_pos,
+                                             ignore_deprel=ignore_deprel)
     utils.insert_entity_relation_features(samples, feature_graph)
 
     return feature_graph

@@ -396,8 +396,10 @@ def insert_sentence_features(
         node_key, **node_attrs, node_prop=GraphNodeType.SENTENCE.value)
 
     doc_node_key = sentence.doc.fname
-    feature_graph.add_edge(
-        doc_node_key, node_key, edge_prop=GraphEdgeType.DOC_TO_SENT.value)
+    feature_graph.add_edge(doc_node_key,
+                           node_key,
+                           edge_prop=GraphEdgeType.DOC_TO_SENT.value,
+                           title=GraphEdgeType.DOC_TO_SENT.value)
 
 
 def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
@@ -426,8 +428,10 @@ def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
         node_key, **node_attrs, node_prop=GraphNodeType.TOKEN.value)
 
     sent_node_key = f'{word.sent.doc.fname}:{word.sent.idx}'
-    feature_graph.add_edge(
-        sent_node_key, node_key, edge_prop=GraphEdgeType.SENT_TO_TOKEN.value)
+    feature_graph.add_edge(sent_node_key,
+                           node_key,
+                           edge_prop=GraphEdgeType.SENT_TO_TOKEN.value,
+                           title=GraphEdgeType.SENT_TO_TOKEN.value)
 
 
 def insert_deprel_features(
@@ -444,16 +448,18 @@ def insert_deprel_features(
     word_key = f'{word.sent.doc.fname}:{word.end_char}'
     head_key = f'{head.sent.doc.fname}:{head.end_char}'
 
-    feature_graph.add_edge(
-        word_key,
-        head_key,
-        deprel=word.deprel,
-        edge_prop=GraphEdgeType.DEPREL.value
-    )
+    feature_graph.add_edge(word_key,
+                           head_key,
+                           deprel=word.deprel,
+                           edge_prop=GraphEdgeType.DEPREL.value,
+                           title=word.deprel)
 
 
-def insert_annotated_document_features(
-        documents: Documents, feature_graph: nx.DiGraph) -> NoReturn:
+def insert_annotated_document_features(documents: Documents,
+                                       feature_graph: nx.DiGraph,
+                                       ignore_pos: list[str]=None,
+                                       ignore_deprel: list[str]=None
+                                       ) -> NoReturn:
     """Populate the feature graph with document, sentence and word features.
 
     For each document in the list, add its features, as well as its respective
@@ -466,15 +472,19 @@ def insert_annotated_document_features(
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
+    ignore_pos = set() if ignore_pos is None else set(ignore_pos)
+    ignore_deprel = set() if ignore_deprel is None else set(ignore_deprel)
+
     for doc in documents:
         insert_document_features(doc, feature_graph)
 
         for sent in doc.sentences:
             insert_sentence_features(sent, feature_graph)
-
             for word in sent.words:
-                insert_word_features(word, feature_graph)
+                if word.upos in ignore_pos or word.deprel in ignore_deprel:
+                    continue
 
+                insert_word_features(word, feature_graph)
                 if (head_id := word.head) != 0:
                     head_word = sent.words[head_id-1]
                     insert_word_features(head_word, feature_graph)
@@ -512,8 +522,10 @@ def insert_entity_features(
     rightmost_boundary = entity['boundaries'][-1]
     end_char = rightmost_boundary['end']
     word_key = f'{entity["fname"]}:{end_char}'
-    feature_graph.add_edge(
-        node_key, word_key, edge_prop=GraphEdgeType.ENTITY.value)
+    feature_graph.add_edge(node_key,
+                           word_key,
+                           edge_prop=GraphEdgeType.ENTITY.value,
+                           title=GraphEdgeType.ENTITY.value)
 
 
 def insert_relation_features(
@@ -542,12 +554,16 @@ def insert_relation_features(
         node_key, **node_attrs, node_prop=GraphNodeType.RELATION.value)
 
     entity1_key = f'{relation["fname"]}:{relation["e1_id"]}'
-    feature_graph.add_edge(
-        node_key, entity1_key, edge_prop=GraphEdgeType.REL_TO_E1.value)
+    feature_graph.add_edge(node_key,
+                           entity1_key,
+                           edge_prop=GraphEdgeType.REL_TO_E1.value,
+                           title=GraphEdgeType.REL_TO_E1.value)
 
     entity2_key = f'{relation["fname"]}:{relation["e2_id"]}'
-    feature_graph.add_edge(
-        node_key, entity2_key, edge_prop=GraphEdgeType.REL_TO_E2.value)
+    feature_graph.add_edge(node_key,
+                           entity2_key,
+                           edge_prop=GraphEdgeType.REL_TO_E2.value,
+                           title=GraphEdgeType.REL_TO_E2.value)
 
 
 def insert_entity_relation_features(
