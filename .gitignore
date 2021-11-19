@@ -3,6 +3,7 @@ stanza_resources/
 BioNLP-OST-2019_BB-rel_dev/
 BioNLP-OST-2019_BB-rel_train/
 BioNLP-OST-2019_BB-rel_test/
+BB-Rel/
 
 # Virtualenv
 .venv

@@ -8,6 +8,7 @@ instead.
 """
 from collections import namedtuple
 from enum import Enum
+import os
 import re
 
 from typing import NoReturn
@@ -20,18 +21,24 @@ from stanza.models.common.doc import Sentence
 from stanza.models.common.doc import Word
 
 
-# Data structures
+# Data structures and Type Hints, hopefully to help you understanding the
+# mapping of inputs to outputs
 Sample = namedtuple('Sample', ['fname', 'txt', 'a1', 'a2'])
-
-# Type Hints, hopefully to help understanding input-output
-## Document and annotations
 Samples = list[Sample]
-AnnotationsA1 = list[str]
-AnnotationsA2 = Optional[list[str]]
+AnnotationA1 = namedtuple('AnnotationA1', ['id', 'type', 'idxs', 'text'])
+AnnotationsA1 = list[AnnotationA1]
+AnnotationA2 = namedtuple('AnnotationA2', ['id', 'type', 'e1_id', 'e2_id'])
+AnnotationsA2 = Optional[list[AnnotationA2]]
 Annotations = Union[AnnotationsA1, AnnotationsA2]
 Documents = list[Document]
+Entity = namedtuple('Entity',
+                    ['fname', 'id', 'type', 'text', 'sent_idx', 'words',
+                     'is_discontinuous'])
+Boundary = namedtuple('Boundary', ['start', 'end'])
+Boundaries = list[Boundary]
+Relation = namedtuple('Relation', ['fname', 'type', 'id', 'e1', 'e2'])
 
-## Feature-graph
+## Graph nodes
 DocumentNodeAttrs = dict[str, str]
 SentenceNodeAttrs = dict[str, Union[str, int]]
 WordNodeAttrs = dict[str, Union[str, int]]
@@ -39,8 +46,6 @@ EntityNodeAttrs = dict[str, str]
 RelationNodeAttrs = dict[str, str]
 
 ## Entity and relation property
-Boundary = dict[str, int]   # The boundary structure: {'start': int, 'end': int}
-Boundaries = list[Boundary]
 EntityParams = dict[str, Union[str, bool, Boundaries]]
 RelationParams = dict[str, str]
 
@@ -62,10 +67,235 @@ class GraphNodeType(Enum):
     ENTITY = 'ENTITY'
 
 
-class GraphColor(Enum):
+class GraphEdgeColor(Enum):
+    DOC_SENT = '#B80C09'
+    SENT_ROOT = '#0B4F6C'
+    SENT_TOKEN = '#21D19F'
+    TOKEN_HEAD = '#474973'
+    ENT_TOKEN = '#01BAEF'
+    REL_ENT = '#FCAB10'
+
+class GraphNodeColor(Enum):
     DOCUMENT = '#DC122A'
     SENTENCE = '#6666FF'
     TOKEN = '#66FF66'
+    HEAD = '#7323cf'
+    ENTITY = '#51E5FF'
+    RELATION = '#474973'
+
+
+def get_document_node_key(fname: str) -> str:
+    """Get a key for a document's node in the feature graph"""
+    return fname
+
+
+def get_sentence_node_key(fname: str, sent_idx: int) -> str:
+    """Get a key for a sentence's node in the feature graph"""
+    return f'{fname}:SENT-{sent_idx}'
+
+
+def get_word_node_key(word: Word) -> str:
+    """Get a key for a word's node in the feature graph"""
+    return f'{word.sent.doc.fname}:WORD-{word.end_char}'
+
+
+def get_entity_node_key(entity: Entity) -> str:
+    """Get a key for an entity's node in the feature graph"""
+    return f'{entity.fname}:ENTITY-{entity.id}'
+
+
+def get_relation_node_key(relation: Relation) -> str:
+    """Get a key for a relation's node in the feature graph"""
+    return f'{relation.fname}:RELATION-{relation.id}'
+
+
+def is_valid_entity(line: str) -> bool:
+    """Check if the line is a valid entity annotation."""
+    regex = r'^T\d+\t\w+ \d+ \d+(;\d+ \d+)*\t.+$'
+    return re.search(regex, line) is not None
+
+
+def is_valid_relation(line: str) -> bool:
+    """Check if the line is a valid binary relation annotation."""
+    regex = r'^R\d+\t\w+ \w+:T\d+ \w+:T\d+$'
+    return re.fullmatch(regex, line) is not None
+
+
+# TODO: Write a propper docstring for the entity-word overlap
+def check_boundaries_overlap(
+    x_start: int, x_end: int, y_start: int, y_end: int) -> bool:
+    """Check if the boundaries of both elements overlap.
+
+    Given the starting and end characters of two text spans, check if the X's
+    span overlaps with Y's span. This function is used to decide if a given
+    token belongs to an entity's text span. To handle issues with unexpected
+    tokenization, the definition of "overlap" used here.
+
+    if (
+        token.start <= entity.start < entity.end and (
+            entity.start < token.end <= entity.end or
+            entity.start < entity.end < token.end
+        )
+    ) elif (
+        entity.start < token.start < entity.end and (
+            entity.start < token.end <= entity.end or
+            entity.start < entity.end < token.end
+        )
+    )
+
+    Case 1:
+    X's span       |----------|
+    Y's span 1  |----------|        or
+    Y's span 2  |-------------|     or
+    Y's span 3  |----------------|
+
+    Case 2
+    X's span       |----------|
+    Y's span 1     |-------|           or
+    Y's span 2     |----------|        or
+    Y's span 3     |-------------|
+
+    Case 3
+    X's span       |----------|
+    Y's span 1        |----|           or
+    Y's span 2        |-------|        or
+    Y's span 3        |----------|
+
+    Arguments:
+        x_start: int
+            The position of X's starting character.
+
+        x_start: int
+            The position of X's starting character.
+
+        x_end: int
+            The position of X's starting character.
+
+        y_start: int
+            The position of X's starting character.
+
+        y_end: int
+            The position of X's starting character.
+
+    Return: True | False
+        True if both spans overlap, False otherwise.
+    """
+    if ((y_start <= x_start < x_end) and
+        ((x_start < y_end <= x_end) or (x_start < x_end < y_end))):
+        return True
+    elif ((x_start < y_start < x_end) and
+          ((x_start < y_end <= x_end) or (x_start < x_end < y_end))):
+        return True
+    else:
+        return False
+
+
+def __replace_nbsps(rawtext: str) -> str:
+    """Replace nbsps with whitespaces"""
+    return rawtext.replace('\xa0', ' ')
+
+def __read_annotations(filepath: str) -> Optional[Annotations]:
+    """Get the list of lines from an annotation file (either A1 or A2)."""
+    try:
+        with open(filepath) as fd:
+            text = fd.read().strip()
+            text = __replace_nbsps(text)
+            annotations = text.splitlines()
+    except FileNotFoundError:
+        annotations = None
+
+    return annotations
+
+
+def read_rawtext(filepath: str) -> str:
+    """Read the contents of either a document or annotation file."""
+    text = 'load_dataset_files:read_rawtext:DEFAULT-TEXT'
+    with open(filepath) as fd:
+        text = fd.read().strip()
+        text = __replace_nbsps(text)
+        text = text.replace(os.linesep, ' ')
+
+    return text
+
+
+def __get_annotation_a1_from(line: str) -> AnnotationA1:
+    """Create an annotation namedtuple from an annotation line.
+
+    Build an A1 annotation from a single line from the `.a1` annotation file.
+
+    Arguments:
+        line: str
+            A single line from an (.a1) annotation file.
+
+    Return: AnnotationA1
+        A namedtuple with the data from the annotation line.
+    """
+    [ent_id, data, text] = line.split('\t')
+    ent_type = data.split(' ')[0]
+    idxs = re.search(r'\d+ \d+(;\d+ \d+)*', data).group()
+    idxs = idxs.split(';')
+    idxs = [tuple(e.split(' ')) for e in idxs]
+    idxs = [Boundary(start=int(s), end=int(e)) for (s, e) in idxs]
+
+    return AnnotationA1(id=ent_id, type=ent_type, idxs=idxs, text=text)
+
+
+def get_annotations_a1(fpath: str) -> list[AnnotationA1]:
+    """Create a list of A1 annotations from the annotation file's lines.
+
+    Given a list of text lines read from an annotation file with the '.a1'
+    extension, return a list of annotation namedtuples.
+
+    Arguments:
+        fpath: str
+            The path to an A1 annotation file (with extension '.a1').
+
+    Return: list[AnnotationA1]
+        A list of annotation structures, matching the lines from the a1
+        annotations file.
+    """
+    a1_lines = __read_annotations(fpath)
+    annotations = [__get_annotation_a1_from(l) for l in a1_lines]
+    return [e for e in annotations if e.type not in {'Title', 'Paragraph'}]
+
+
+def __get_annotation_a2_from(line: str) -> AnnotationA2:
+    """Create an annotation namedtuple from an annotation line.
+
+    Build an A2 annotation from a single line from the `.a2` annotation file.
+
+    Arguments:
+        line: str
+            A single line from an (.a2) annotation file.
+
+    Return: AnnotationA2
+        A namedtuple with the data from the annotation line.
+    """
+    [rel_id, data] = line.split('\t')
+    [rel_type, e1, e2] = data.split(' ')
+    e1_id = e1.split(':')[-1]
+    e2_id = e2.split(':')[-1]
+
+    return AnnotationA2(id=rel_id, type=rel_type, e1_id=e1_id, e2_id=e2_id)
+
+
+def get_annotations_a2(fpath: str) -> list[AnnotationA2]:
+    """Create a list of A2 annotations from the annotation file's lines.
+
+    Given a list of text lines read from an annotation file with the '.a2'
+    extension, return a list of annotation namedtuples.
+
+    Arguments:
+        fpath: str
+            The path to an A2 annotation file (with extension '.a2').
+
+    Return: list[AnnotationA2]
+        A list of annotation structures, matching the lines from the A2
+        annotations file.
+    """
+    a2_lines = __read_annotations(fpath)
+    return [__get_annotation_a2_from(l) for l in a2_lines
+            if is_valid_relation(l)]
 
 
 def get_document_node_attrs(document: Document) -> DocumentNodeAttrs:
@@ -86,7 +316,7 @@ def get_document_node_attrs(document: Document) -> DocumentNodeAttrs:
         'fname': document.fname,
         'text': document.text,
         'label': f"DOC: {document.fname}",  # for pyvis
-        'color': GraphColor.DOCUMENT.value # for pyvis
+        'color': GraphNodeColor.DOCUMENT.value # for pyvis
     }
 
 
@@ -109,7 +339,7 @@ def get_sentence_node_attrs(sentence: Sentence) -> SentenceNodeAttrs:
         'sent_idx': sentence.idx,
         'text': sentence.text,
         'label': f'SENT-{sentence.idx}',    # for pyvis
-        'color': GraphColor.SENTENCE.value # for pyvis
+        'color': GraphNodeColor.SENTENCE.value # for pyvis
     }
 
 
@@ -131,6 +361,12 @@ def get_word_node_attrs(word: Word) -> WordNodeAttrs:
         A dictionary containing the word's features to be used by networkx's
         feature graph.
     """
+    # Changing the color for the sentence's head token
+    if word.head == 0:
+        color = GraphNodeColor.HEAD.value
+    else:
+        color = GraphNodeColor.TOKEN.value
+
     return {
         'fname': word.sent.doc.fname,
         'start_idx': word.parent.start_char,
@@ -138,69 +374,56 @@ def get_word_node_attrs(word: Word) -> WordNodeAttrs:
         'text': word.text,
         'upos': word.upos,
         'lemma': word.lemma,
-        'label': f"WORD: '{word.text}'",    # for PyVis
-        'color': GraphColor.TOKEN.value    # for pyvis
+        'label': word.text,                 # for PyVis
+        'color': color                      # for pyvis
     }
 
 
-def get_entity_node_attrs(entity: EntityParams) -> EntityNodeAttrs:
+def get_entity_node_attrs(entity: Entity) -> EntityNodeAttrs:
     """Create the graph's node attribute for an `Entity`.
 
     Given an entity annotation, build a property dict for an entity node in
     the feature graph.
 
     Arguments:
-        entity: EntityParams
-            An entity's parameter dictionary.
+        entity: Entity
+            An entity's namedtuple instance.
 
     Return: EntityNodeAttrs
         A dictionary containing the entity's features to be used by networkx's
         feature graph.
     """
     return {
-        'id': entity['id'],
-        'type': entity['type'],
-        'boundaries': entity['boundaries'],
-        'text': entity['text'],
-        'is_discontinuous': entity['is_discontinuous'],
-        'label': entity['id'] # for PyVis
+        'id': entity.id,
+        'type': entity.type,
+        'text': entity.text,
+        'is_discontinuous': entity.is_discontinuous,
+        'label': entity.id # for PyVis
     }
 
 
-def get_relation_node_attrs(relation: RelationParams) -> RelationNodeAttrs:
+def get_relation_node_attrs(relation: Relation) -> RelationNodeAttrs:
     """Create the graph's node attribute for a `Relation`.
 
     Given a relation annotation, build a property dict for an relation node in
     the feature graph.
 
     Arguments:
-        relation: RelationParams
-            A relation's parameter dictionary.
+        relation: Relation
+            A relation's nameduple instance.
 
     Return: RelationNodeAttrs
-        A dictionary containing the relation's features to be used by networkx's
-        feature graph.
+        A dictionary containing the relation's features to be used by
+        networkx's feature graph.
     """
     return {
-        'id': relation['id'],
-        'type': relation['type'],
-        'label': relation['id'] # for PyVis
+        'id': relation.id,
+        'type': relation.type,
+        'label': relation.id # for PyVis
     }
 
 
-def is_valid_entity(line: str) -> bool:
-    """Check if the line is a valid entity annotation."""
-    regex = r'^T\d+\t\w+ \d+ \d+(;\d+ \d+)*\t.+$'
-    return re.search(regex, line) is not None
-
-
-def is_valid_relation(line: str) -> bool:
-    """Check if the line is a valid relation annotation."""
-    regex = r'^R\d+\t\w+ \w+:T\d+ \w+:T\d+$'
-    return re.fullmatch(regex, line) is not None
-
-
-def get_entity_param_dict(entity: str, filename: str) -> EntityParams:
+def get_entity_param_dict(entity: Entity) -> EntityParams:
     """Get the entity's parameters structure
 
     Given an entity string with with the format
@@ -226,39 +449,24 @@ def get_entity_param_dict(entity: str, filename: str) -> EntityParams:
             'fname':            'BB-rel-10496597',
             'id':               'T14',
             'type':             'Habitat',
-            'boundaries':       [(603, 611), (657, 685)],
             'text':             'patients with low-grade MALT lymphoma',
             'is_discontinuous': True
         }
 
     Arguments:
-        entity: str
-            A single entity annotation line.
-
-        filename: str
-            The name of the document (without the extension) where this entity
-            is from.
+        entity: Entity
+            A single entity namedtuple instance.
 
     Return: EntityParams
         A dictionary containing the parameters from the entity annotation line.
     """
-    if not is_valid_entity(entity):
-        raise ValueError("The argument doesn't match the expected format")
-
-    [entity_id, data, text] = entity.split('\t')
-    entity_type = re.search(r'^\w+', data).group()
-    boundary_str = re.search(r'\d+ \d+(;\d+ \d+)*', data).group()
-    boundaries = boundary_str.split(';')
-    boundaries = [tuple(b.split(' ')) for b in boundaries]
-    boundaries = [{'start': int(s), 'end': int(e)} for (s, e) in boundaries]
-
+    fname = entity.words[0].sent.doc.fname
     return {
-        'fname': filename,
-        'id': entity_id,
-        'type': entity_type,
-        'boundaries': boundaries,
-        'text': text,
-        'is_discontinuous': len(boundaries) > 1
+        'fname': fname,
+        'id': entity.id,
+        'type': entity.type,
+        'text': entity.text,
+        'is_discontinuous': entity.is_discontinuous
     }
 
 
@@ -274,7 +482,7 @@ def get_sample_entity_param_dicts(sample: Sample) -> list[EntityParams]:
     Return: list[EntityParams]
         A list of the sample's entity annotation parameters.
     """
-    return [get_entity_param_dict(e, sample.fname) for e in sample.a1]
+    return [get_entity_param_dict(e) for e in sample.a1]
 
 
 def get_relation_param_dict(relation: str, filename: str) -> RelationParams:
@@ -313,8 +521,8 @@ def get_relation_param_dict(relation: str, filename: str) -> RelationParams:
             A single relation annotation line.
 
         filename: str
-            The name of the document (without the extension) where this relation
-            is from.
+            The name of the document (without the extension) where this
+            relation is from.
 
     Return: RelationParams
         A dictionary containing the parameters from the relation annotation
@@ -372,10 +580,11 @@ def insert_document_features(
 
     Return: nothing
     """
-    node_key = document.fname
-    node_attrs = get_document_node_attrs(document)
-    feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.DOCUMENT.value)
+    doc_node_key = get_document_node_key(document.fname)
+    doc_node_attrs = get_document_node_attrs(document)
+    feature_graph.add_node(doc_node_key,
+                           **doc_node_attrs,
+                           node_prop=GraphNodeType.DOCUMENT.value)
 
 
 def insert_sentence_features(
@@ -389,17 +598,19 @@ def insert_sentence_features(
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    node_key = f'{sentence.doc.fname}:{sentence.idx}'
-    node_attrs = get_sentence_node_attrs(sentence)
+    fname = sentence.doc.fname
+    sent_node_key = get_sentence_node_key(fname, sentence.idx)
+    sent_node_attrs = get_sentence_node_attrs(sentence)
+    feature_graph.add_node(sent_node_key,
+                           **sent_node_attrs,
+                           node_prop=GraphNodeType.SENTENCE.value)
 
-    feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.SENTENCE.value)
-
-    doc_node_key = sentence.doc.fname
-    feature_graph.add_edge(doc_node_key,
-                           node_key,
+    doc_node_key = get_document_node_key(fname)
+    feature_graph.add_edge(sent_node_key,
+                           doc_node_key,
                            edge_prop=GraphEdgeType.DOC_TO_SENT.value,
-                           title=GraphEdgeType.DOC_TO_SENT.value)
+                           title=GraphEdgeType.DOC_TO_SENT.value,
+                           color=GraphEdgeColor.DOC_SENT.value)
 
 
 def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
@@ -407,10 +618,10 @@ def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
 
     Given a `Word`, this fuction will add a `Token` node and its edges into the
     features graph. Although the stanza implementation differentiates between
-    `Token` and `Word` objects, for the purpose of simplicity, the feature graph
-    will only use the term `Token` as if we were talking about stanza's `Word`
-    object. Note that this assumption could be problematic with languages that
-    have multi-word tokens. For more information:
+    `Token` and `Word` objects, for the purpose of simplicity, the feature
+    graph will only use the term `Token` as if we were talking about stanza's
+    `Word` object. Note that this assumption could be problematic with
+    languages that have multi-word tokens. For more information:
 
         https://stanfordnlp.github.io/stanza/data_objects.html#word
 
@@ -421,17 +632,20 @@ def insert_word_features(word: Word, feature_graph: nx.DiGraph) -> NoReturn:
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    node_key = f'{word.sent.doc.fname}:{word.end_char}'
-    node_attrs = get_word_node_attrs(word)
+    fname = word.sent.doc.fname
+    word_node_key = get_word_node_key(word)
+    word_node_attrs = get_word_node_attrs(word)
 
-    feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.TOKEN.value)
+    feature_graph.add_node(word_node_key,
+                           **word_node_attrs,
+                           node_prop=GraphNodeType.TOKEN.value)
 
-    sent_node_key = f'{word.sent.doc.fname}:{word.sent.idx}'
-    feature_graph.add_edge(sent_node_key,
-                           node_key,
+    sent_node_key = get_sentence_node_key(fname, word.sent.idx)
+    feature_graph.add_edge(word_node_key,
+                           sent_node_key,
                            edge_prop=GraphEdgeType.SENT_TO_TOKEN.value,
-                           title=GraphEdgeType.SENT_TO_TOKEN.value)
+                           title=GraphEdgeType.SENT_TO_TOKEN.value,
+                           color=GraphEdgeColor.SENT_TOKEN.value)
 
 
 def insert_deprel_features(
@@ -445,14 +659,15 @@ def insert_deprel_features(
         head: Word
             The syntactic head of the `word` argument.
     """
-    word_key = f'{word.sent.doc.fname}:{word.end_char}'
-    head_key = f'{head.sent.doc.fname}:{head.end_char}'
-
-    feature_graph.add_edge(word_key,
-                           head_key,
+    fname = word.sent.doc.fname
+    word_node_key = get_word_node_key(word)
+    head_node_key = get_word_node_key(head)
+    feature_graph.add_edge(word_node_key,
+                           head_node_key,
                            deprel=word.deprel,
                            edge_prop=GraphEdgeType.DEPREL.value,
-                           title=word.deprel)
+                           title=word.deprel,
+                           color=GraphEdgeColor.TOKEN_HEAD.value)
 
 
 def insert_annotated_document_features(documents: Documents,
@@ -492,7 +707,7 @@ def insert_annotated_document_features(documents: Documents,
 
 
 def insert_entity_features(
-        entity: EntityParams, feature_graph: nx.DiGraph) -> NoReturn:
+        entity: Entity, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert the entity node into the features graph. 
 
     Insert into the graph a node and an edge connecting the entity to the
@@ -505,35 +720,35 @@ def insert_entity_features(
     the sequence [`monoclonal`, `B`, `cells`].
 
     Arguments:
-        entity: EntityParams
-            A dict containing the entity's parameters.
+        entity: Entity
+            An entity namedtuple instance containing its parameters.
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    if entity['type'] in {'Title', 'Paragraph'}:    # Ignore these entities
-        return
+    fname = entity.words[0].sent.doc.fname
+    entity_node_key = get_entity_node_key(entity)
+    entity_node_attrs = get_entity_node_attrs(entity)
+    feature_graph.add_node(entity_node_key,
+                           **entity_node_attrs,
+                           node_prop=GraphNodeType.ENTITY.value,
+                           color=GraphNodeColor.ENTITY.value)
 
-    node_key = f'{entity["fname"]}:{entity["id"]}'
-    node_attrs = get_entity_node_attrs(entity)
-    feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.ENTITY.value)
-
-    rightmost_boundary = entity['boundaries'][-1]
-    end_char = rightmost_boundary['end']
-    word_key = f'{entity["fname"]}:{end_char}'
-    feature_graph.add_edge(node_key,
+    rightmost_word = entity.words[-1]
+    word_key = get_word_node_key(rightmost_word)
+    feature_graph.add_edge(entity_node_key,
                            word_key,
                            edge_prop=GraphEdgeType.ENTITY.value,
-                           title=GraphEdgeType.ENTITY.value)
+                           title=GraphEdgeType.ENTITY.value,
+                           color=GraphEdgeColor.ENT_TOKEN.value)
 
 
 def insert_relation_features(
-        relation: RelationParams, feature_graph: nx.DiGraph) -> NoReturn:
+        relation: Relation, feature_graph: nx.DiGraph) -> NoReturn:
     """Insert the relation node into the features graph. 
 
-    Insert into the graph a node and edges representing the relation and its two
-    entities. For example, given the relation annotation
+    Insert into the graph a node and edges representing the relation and its
+    two entities. For example, given the relation annotation
 
         'R1\tLives_In Microorganism:T19 Location:T15'
 
@@ -542,36 +757,43 @@ def insert_relation_features(
     and `T15`.
 
     Arguments:
-        relation: RelationParams
-            A dict containing the relation's parameters.
+        relation: Relation
+            A relation's namedtuple instance with its parameters.
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    node_key = f'{relation["fname"]}:{relation["id"]}'
-    node_attrs = get_relation_node_attrs(relation)
-    feature_graph.add_node(
-        node_key, **node_attrs, node_prop=GraphNodeType.RELATION.value)
+    rel_node_key = get_relation_node_key(relation)
+    rel_node_attrs = get_relation_node_attrs(relation)
+    feature_graph.add_node(rel_node_key,
+                           **rel_node_attrs,
+                           node_prop=GraphNodeType.RELATION.value,
+                           color=GraphNodeColor.RELATION.value)
 
-    entity1_key = f'{relation["fname"]}:{relation["e1_id"]}'
-    feature_graph.add_edge(node_key,
+    entity1_key = get_entity_node_key(relation.e1)
+    feature_graph.add_edge(rel_node_key,
                            entity1_key,
                            edge_prop=GraphEdgeType.REL_TO_E1.value,
-                           title=GraphEdgeType.REL_TO_E1.value)
+                           title=GraphEdgeType.REL_TO_E1.value,
+                           color=GraphEdgeColor.REL_ENT.value)
 
-    entity2_key = f'{relation["fname"]}:{relation["e2_id"]}'
-    feature_graph.add_edge(node_key,
+    entity2_key = get_entity_node_key(relation.e2)
+    feature_graph.add_edge(rel_node_key,
                            entity2_key,
                            edge_prop=GraphEdgeType.REL_TO_E2.value,
-                           title=GraphEdgeType.REL_TO_E2.value)
+                           title=GraphEdgeType.REL_TO_E2.value,
+                           color=GraphEdgeColor.REL_ENT.value)
 
 
-def insert_entity_relation_features(
-        samples: Samples, feature_graph: nx.DiGraph) -> NoReturn:
+def insert_entity_relation_features(documents: Documents,
+                                    feature_graph: nx.DiGraph,
+                                    ignore_intra_sent_relations: bool = False
+                                    ) -> NoReturn:
     """Insert (inplace) the entity relation features into a graph.
 
-    Populate the feature graph with entity relation features, extracted from the
-    list of annotated samples. The entity and relation edges are as follows:
+    Populate the feature graph with entity relation features, extracted from
+    the list of annotated samples. The entity and relation edges are as
+    follows:
 
         Relation --entity_1--> Entity
         Relation --entity_2--> Entity
@@ -591,15 +813,16 @@ def insert_entity_relation_features(
         * is_discontinuous: entity['is_discontinuous']
 
     Arguments:
-        samples: Samples
-            A list of text and annotation samples.
+        documents: util.Documents
+            A list of stanza-annotated documents, including entity-relation
+            annotations.
 
         feature_graph: nx.DiGraph
             A graph of features to populate.
     """
-    for sample in samples:
-        for entity_dict in get_sample_entity_param_dicts(sample):
-            insert_entity_features(entity_dict, feature_graph)
+    for doc in documents:
+        for ent in doc.entities.values():
+            insert_entity_features(ent, feature_graph)
 
-        for relation_dict in get_sample_relation_param_dicts(sample):
-            insert_relation_features(relation_dict, feature_graph)
+        for rel in doc.relations.values():
+            insert_relation_features(rel, feature_graph)

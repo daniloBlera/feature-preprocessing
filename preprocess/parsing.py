@@ -3,7 +3,7 @@
 """This modules provides the top-level pre-processing functions."""
 import os
 import re
-from typing import NoReturn
+from typing import Optional
 
 from networkx import DiGraph
 from networkx.algorithms.components import node_connected_component
@@ -16,6 +16,7 @@ from . import utils
 
 def load_dataset_files(rootdir: str,
                        no_labels: bool = False,
+                       ignore_no_relations: bool = False,
                        verbosity_level: int = 1) -> utils.Samples:
     """Read all texts and annotations files from a directory
 
@@ -27,8 +28,11 @@ def load_dataset_files(rootdir: str,
         rootdir: str
             The path to the root of the dataset files.
 
-        no_labels: bool
+        no_labels: True | False
             Ignore missing labels (a2 annotations).
+
+        ignore_no_relations: True | False
+            Skip loading the files without entity relations.
 
         verbosity_level: int
             Print information about the processing - 0: no output, 1: progress
@@ -39,30 +43,6 @@ def load_dataset_files(rootdir: str,
         annotations. Note that label annotations (a2) will be set to `None` on
         validation datasets.
     """
-    def replace_nbsps(rawtext: str) -> str:
-        """Replace nbsps with whitespaces"""
-        return rawtext.replace('\xa0', ' ')
-
-    def read_annotations(filepath: str) -> utils.Annotations:
-        try:
-            with open(filepath) as fd:
-                text = fd.read().strip()
-                text = replace_nbsps(text)
-                annotations = text.splitlines()
-        except FileNotFoundError:
-            annotations = None
-
-        return annotations
-
-    def read_rawtext(filepath: str) -> str:
-        text = 'load_dataset_files:read_rawtext:DEFAULT-TEXT'
-        with open(filepath) as fd:
-            text = fd.read().strip()
-            text = replace_nbsps(text)
-            text = text.replace(os.linesep, ' ')
-
-        return text
-
     samples = list()
     fnames = [e.strip('.txt') for e in os.listdir(rootdir)
               if e.endswith('.txt')]
@@ -74,9 +54,13 @@ def load_dataset_files(rootdir: str,
         fnames_wrapper = fnames
 
     for fname in fnames_wrapper:
-        a1 = read_annotations(os.path.join(rootdir, fname) + '.a1')
-        a2 = read_annotations(os.path.join(rootdir, fname) + '.a2')
-        txt = read_rawtext(os.path.join(rootdir, fname) + '.txt')
+        a1 = utils.get_annotations_a1(os.path.join(rootdir, fname) + '.a1')
+        a2 = utils.get_annotations_a2(os.path.join(rootdir, fname) + '.a2')
+        txt = utils.read_rawtext(os.path.join(rootdir, fname) + '.txt')
+
+        if ignore_no_relations and isinstance(a2, list) and not a2:
+            continue
+
         samples.append(utils.Sample(fname=fname, txt=txt, a1=a1, a2=a2))
 
     if verbosity_level == 2:
@@ -125,7 +109,7 @@ def annotate(samples: utils.Samples,
     Return: utils.Documents
         A list of stanza-annotated documents.
     """
-    documents = list()
+    docs = list()
     if verbosity_level == 1:
         print('Annotating documents...')
         samples_wrapper = tqdm(samples)
@@ -136,11 +120,14 @@ def annotate(samples: utils.Samples,
         if verbosity_level == 2:
             print(f'\n# TEXT {sample_idx+1:0>3}\t{sample.fname}')
 
-        document = pipeline(sample.txt)
-
+        doc = pipeline(sample.txt)
         # Adding the document's filename (without the extension)
-        document.fname = sample.fname
-        for (sent_idx, sent) in enumerate(document.sentences):
+        doc.fname = sample.fname
+        doc.entities = dict()
+        doc.relations = dict()
+        doc_entities = dict()
+
+        for (sent_idx, sent) in enumerate(doc.sentences):
             sent.idx = sent_idx # Adding the sentence's index in the document
 
             if verbosity_level == 2:
@@ -151,16 +138,57 @@ def annotate(samples: utils.Samples,
                 # Adding a reference to the sentence
                 word.sent = sent
                 word.parent.sent = sent
+                token = word.parent
 
-        documents.append(document)
+                # Storing words from annotated entities
+                for ent in sample.a1:
+                    if ent.id not in doc_entities:
+                        doc_entities[ent.id] = {
+                            'fname': doc.fname,
+                            'type': ent.type,
+                            'text': ent.text,
+                            'words': list(),
+                            'is_discontinuous': len(ent.idxs) > 1
+                        }
 
-    return documents
+                    for boundary in ent.idxs:
+                        if utils.check_boundaries_overlap(
+                                token.start_char, token.end_char,
+                                boundary.start, boundary.end):
+                            doc_entities[ent.id]['words'].append(word)
+
+        for (ent_id, ent) in doc_entities.items():
+            ent_type = ent['type']
+            sent_idx = ent['words'][0].sent.idx
+            entity = utils.Entity(
+                fname=ent['fname'],
+                id=ent_id,
+                type=ent_type,
+                text=ent['text'],
+                sent_idx=sent_idx,
+                words=ent['words'],
+                is_discontinuous=ent['is_discontinuous']
+            )
+            doc.entities[ent_id] = entity
+
+        for rel in sample.a2:
+            e1 = doc.entities[rel.e1_id]
+            e2 = doc.entities[rel.e2_id]
+            relation = utils.Relation(
+                fname=sample.fname, type=rel.type, id=rel.id, e1=e1, e2=e2)
+            doc.relations[rel.id] = relation
+
+        docs.append(doc)
+
+    return docs
 
 
 def create_feature_graph(documents: utils.Documents,
                          samples: utils.Samples,
                          ignore_pos: list[str] = None,
-                         ignore_deprel: list[str] = None) -> DiGraph:
+                         ignore_deprel: list[str] = None,
+                         ignore_intra_sent_relations: bool = False
+                         ) -> DiGraph:
     """Build a graph with morphological and relational features.
 
     Create and populate a directed graph with the morphological and relational
@@ -187,7 +215,7 @@ def create_feature_graph(documents: utils.Documents,
 
     Sentence
     key:
-        f'{fname}:{sent_idx}'
+        f'{fname}:SENT-{sent_idx}'
     properties:
         * node_prop:        'SENTENCE'
         * fname:            str
@@ -197,7 +225,7 @@ def create_feature_graph(documents: utils.Documents,
 
     Token
     key:
-        f'{fname}:{end_idx}'
+        f'{fname}:WORD-{end_idx}'
     properties:
         * node_prop:        'TOKEN'
         * fname:            str
@@ -210,7 +238,7 @@ def create_feature_graph(documents: utils.Documents,
 
     Relation
     key:
-        f'{fname}:id'
+        f'{fname}:RELATION-id'
     properties:
         * node_prop:        'RELATION'
         * id:               'R[0-9]+'
@@ -219,7 +247,7 @@ def create_feature_graph(documents: utils.Documents,
 
     Entity
     key:
-        f'{fname}:{id}'
+        f'{fname}:ENTITY-{id}'
     properties:
         * node_prop:        'ENTITY'
         * id:               'E[0-9]+'
@@ -236,20 +264,32 @@ def create_feature_graph(documents: utils.Documents,
         samples: utils.Samples
             A list of text and annotation samples.
 
+        ignore_pos: list[str]
+            A list of Part-of-Speech tags to ignore.
+
+        ignore_deprel: list[str]
+            A list of (universal) dependency relation tags to ignore.
+
+        ignore_intra_sent_relations: True | False
+            If relations between entities from different sentences should be
+            skipped.
+
     Return: DiGraph
         A graph of features built from a list of (stanza) annotated documents.
     """
     feature_graph = DiGraph()
-    utils.insert_annotated_document_features(documents=documents,
-                                             feature_graph=feature_graph,
-                                             ignore_pos=ignore_pos,
-                                             ignore_deprel=ignore_deprel)
-    utils.insert_entity_relation_features(samples, feature_graph)
+    utils.insert_annotated_document_features(documents,
+                                             feature_graph,
+                                             ignore_pos,
+                                             ignore_deprel)
+    utils.insert_entity_relation_features(documents,
+                                          feature_graph,
+                                          ignore_intra_sent_relations)
 
     return feature_graph
 
 
-def export_subgraph(node_label, graph: DiGraph, filepath=None) -> NoReturn:
+def export_subgraph(node_label, graph: DiGraph, filepath=None) -> None:
     """Export the document's subgraph for visualization.
 
     Given a node label, export to file a subgraph of all connected nodes.
@@ -277,6 +317,4 @@ def export_subgraph(node_label, graph: DiGraph, filepath=None) -> NoReturn:
     if not os.path.exists((dirname := os.path.dirname(filepath))):
         os.makedirs(dirname)
 
-    print(f"Saving the graph visualization of the document '{node_label}' at",
-          f"'{filepath}'.")
     net.save_graph(filepath)
