@@ -29,8 +29,6 @@ def main(root_dir: str) -> None:
                                                     ignore_no_relations=True,
                                                     verbosity_level=2)
 
-    # See the 'Issue 1' section in 'TODO.md'
-    # samples = [s for s in samples if '10496597' in s.fname]
     nlp = stanza.Pipeline(
         lang='en', package='craft', dir=MODEL_DIR, logging_level='WARN')
 
